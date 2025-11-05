@@ -12,9 +12,11 @@ func GetHostName() (string, error) {
 
 func GetIP() (net.IP, error) {
 	conn, err := net.Dial("udp", "8.8.8.8:80")
+
 	if err != nil {
 		return nil, err
 	}
+	
 	defer conn.Close()
 
 	localAddr := conn.LocalAddr().(*net.UDPAddr)

@@ -1,10 +1,15 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"net/http"
+	"os"
+	"os/signal"
+	"syscall"
 	"time"
 
 	"github.com/Iowel/kube-dep-srv/details"
@@ -25,8 +30,10 @@ func (u *Manage) SaveUser(id, service string) {
 }
 
 func (u *Manage) SaveTableHandler(w http.ResponseWriter, r *http.Request) {
-	id := r.URL.Query().Get("id")
-	service := r.URL.Query().Get("service")
+	var (
+		id      = r.URL.Query().Get("id")
+		service = r.URL.Query().Get("service")
+	)
 
 	u.SaveUser(id, service)
 
@@ -36,8 +43,8 @@ func (u *Manage) SaveTableHandler(w http.ResponseWriter, r *http.Request) {
 func (u *Manage) GetTableHandler(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 
-	ipTable, ok := u.ipTable[id]
-	if !ok {
+	ipTable, exist := u.ipTable[id]
+	if !exist {
 		http.Error(w, "table not exist", http.StatusBadRequest)
 	}
 
@@ -87,22 +94,45 @@ func main() {
 
 	m := NewManage()
 
-	r.HandleFunc("/", roothHandler)
-	r.HandleFunc("/health", healthHandler)
-	r.HandleFunc("/details", detailshHandler)
+	r.HandleFunc("GET /", roothHandler)
+	r.HandleFunc("GET /health", healthHandler)
+	r.HandleFunc("GET /details", detailshHandler)
 
-	r.HandleFunc("/table", m.SaveTableHandler)
-	r.HandleFunc("/table/{id}", m.GetTableHandler)
+	r.HandleFunc("GET /table", m.SaveTableHandler)
+	r.HandleFunc("GET /table/{id}", m.GetTableHandler)
 
-	s := &http.Server{
-		Addr:    ":80",
-		Handler: r,
+	srv := &http.Server{
+		Addr:         ":80",
+		Handler:      r,
+		WriteTimeout: time.Second * 15,
+		IdleTimeout:  time.Second * 15,
 	}
 
 	log.Println("Server has started")
 
-	if err := s.ListenAndServe(); err != nil {
-		log.Fatal(err)
+	go func() {
+		if err := srv.ListenAndServe(); err != nil {
+			if errors.Is(err, http.ErrServerClosed) {
+				return
+			}
+
+			log.Fatalf("server listening error: %v", err)
+		}
+	}()
+
+	sig := make(chan os.Signal, 1)
+	signal.Notify(sig, os.Interrupt, syscall.SIGTERM)
+
+	<-sig
+
+	log.Println("shutting down server")
+
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second*5)
+	defer cancel()
+
+	if err := srv.Shutdown(ctx); err != nil {
+		log.Fatalf("shutdown server error: %v", err)
 	}
 
+	log.Println("server exiting")
 }
